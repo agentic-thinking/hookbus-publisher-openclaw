@@ -1,0 +1,19 @@
+{
+  "name": "@agentic-thinking/hookbus-publisher-openclaw",
+  "version": "0.4.0",
+  "description": "OpenClaw publisher for HookBus. Full event coverage: PreToolUse, PostToolUse, PostLLMCall.",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT",
+  "homepage": "https://agenticthinking.uk",
+  "repository": "github:agentic-thinking/hookbus-publisher-openclaw",
+  "author": "Agentic Thinking Ltd <contact@agenticthinking.uk>",
+  "scripts": {
+    "test": "node test_bundle.mjs"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ]
+  }
+}

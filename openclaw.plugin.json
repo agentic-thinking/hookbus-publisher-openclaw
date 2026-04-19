@@ -1,0 +1,11 @@
+{
+  "id": "cre",
+  "name": "HookBus Publisher",
+  "description": "Publishes OpenClaw before_tool_call, after_tool_call, and llm_output events to HookBus. Enforces consolidated verdict on tool calls; emits observation events for post-tool + post-LLM.",
+  "version": "0.4.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
