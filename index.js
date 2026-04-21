@@ -10,37 +10,92 @@
  * into metadata on tool-call events, so subscribers that only see tool events
  * still get model attribution (matches Hermes publisher behaviour).
  *
- * Fail mode (PreToolUse only):
- *   HOOKBUS_FAIL_MODE=closed (default) -> bus unreachable => deny (fail-safe)
- *   HOOKBUS_FAIL_MODE=open             -> bus unreachable => allow (dev mode)
+ * Environment:
+ *   HOOKBUS_URL         default http://localhost:18800/event
+ *   HOOKBUS_TOKEN       bearer token, optional
+ *   HOOKBUS_SOURCE      default 'openclaw'
+ *   HOOKBUS_TIMEOUT_MS  default 60000
+ *   HOOKBUS_FAIL_MODE   'closed' (default for openclaw, fail-safe deny) or 'open'
+ *   HOOKBUS_DEBUG       '1' to emit diagnostic logs on stderr
+ *
+ * Licence: MIT. Copyright 2026 Agentic Thinking Limited.
  */
-import { request } from "node:http";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 
+const VERSION = "0.4.1";
 const BUS_URL = process.env.HOOKBUS_URL || "http://localhost:18800/event";
 const TIMEOUT_MS = parseInt(process.env.HOOKBUS_TIMEOUT_MS || "60000", 10);
-const FAIL_MODE = (process.env.HOOKBUS_FAIL_MODE || "closed").toLowerCase();
+const FAIL_MODE_RAW = (process.env.HOOKBUS_FAIL_MODE || "closed").toLowerCase();
+const FAIL_MODE = FAIL_MODE_RAW === "open" ? "open" : "closed";
 const SOURCE = process.env.HOOKBUS_SOURCE || "openclaw";
 const TOKEN = process.env.HOOKBUS_TOKEN || "";
-const VERSION = "0.4.0";
+const DEBUG = process.env.HOOKBUS_DEBUG === "1";
+
+function log(level, msg) {
+  if (!DEBUG && level === "info") return;
+  process.stderr.write(`[hookbus-openclaw] ${level}: ${msg}\n`);
+}
+
+// Startup validation: warn on obviously-broken config. Never crash.
+(function validateStartup() {
+  try {
+    const u = new URL(BUS_URL);
+    if (u.protocol !== "http:" && u.protocol !== "https:") {
+      log("error", `HOOKBUS_URL has unsupported protocol '${u.protocol}', only http/https allowed`);
+    } else if (!u.hostname) {
+      log("error", `HOOKBUS_URL missing host: ${BUS_URL}`);
+    }
+  } catch (e) {
+    log("error", `HOOKBUS_URL is not a valid URL (${BUS_URL}): ${e.message}`);
+  }
+  if (!TOKEN) log("warn", "HOOKBUS_TOKEN is empty; authenticated buses will reject requests");
+  log("info", `started v${VERSION} (source=${SOURCE}, fail_mode=${FAIL_MODE}, bus=${BUS_URL})`);
+})();
 
 // Cached from most recent llm_output so tool-call events get model attribution.
 let _lastModel = "";
 let _lastProvider = "";
 
+function failVerdict(reason) {
+  return {
+    decision: FAIL_MODE === "open" ? "allow" : "deny",
+    reason,
+  };
+}
+
 function postEvent(envelope, { silent = false } = {}) {
   return new Promise((resolve) => {
     let url;
-    try { url = new URL(BUS_URL); } catch (e) {
-      resolve({ decision: FAIL_MODE === "open" ? "allow" : "deny", reason: `Invalid HOOKBUS_URL: ${e.message}` });
+    try {
+      url = new URL(BUS_URL);
+    } catch (e) {
+      if (silent) { resolve(null); return; }
+      resolve(failVerdict(`Invalid HOOKBUS_URL: ${e.message}`));
       return;
     }
-    const body = JSON.stringify(envelope);
-    const req = request({
+
+    // Envelope serialisation guard: circular refs in tool_input should not crash the plugin.
+    let body;
+    try {
+      body = JSON.stringify(envelope);
+    } catch (e) {
+      log("warn", `envelope serialisation failed: ${e.message}`);
+      if (silent) { resolve(null); return; }
+      resolve(failVerdict(`envelope serialisation failed: ${e.message}`));
+      return;
+    }
+
+    const isHttps = url.protocol === "https:";
+    const requestFn = isHttps ? httpsRequest : httpRequest;
+    const defaultPort = isHttps ? 443 : 80;
+
+    const req = requestFn({
       hostname: url.hostname,
-      port: url.port || 80,
-      path: url.pathname,
+      port: url.port || defaultPort,
+      path: url.pathname + (url.search || ""),
       method: "POST",
       headers: (() => {
         const h = { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) };
@@ -53,22 +108,49 @@ function postEvent(envelope, { silent = false } = {}) {
       res.on("data", (c) => (buf += c));
       res.on("end", () => {
         if (silent) { resolve(null); return; }
-        try {
-          const data = JSON.parse(buf);
-          resolve({ decision: data.decision || "deny", reason: data.reason || "" });
-        } catch {
-          resolve({ decision: FAIL_MODE === "open" ? "allow" : "deny", reason: "HookBus returned non-JSON" });
+
+        if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+          log("warn", `bus returned HTTP ${res.statusCode} for ${envelope.event_type}`);
+          resolve(failVerdict(`HookBus HTTP ${res.statusCode}`));
+          return;
         }
+
+        const ctype = (res.headers["content-type"] || "").toLowerCase();
+        if (!ctype.includes("json")) {
+          log("warn", `bus returned non-JSON content-type '${ctype}' for ${envelope.event_type}`);
+          resolve(failVerdict(`HookBus returned non-JSON (${ctype || "unknown"})`));
+          return;
+        }
+
+        let data;
+        try {
+          data = JSON.parse(buf);
+        } catch (e) {
+          log("warn", `bus response JSON parse failed: ${e.message}`);
+          resolve(failVerdict("HookBus response not valid JSON"));
+          return;
+        }
+
+        if (!data || typeof data !== "object") {
+          log("warn", "bus response is not an object");
+          resolve(failVerdict("HookBus response was not an object"));
+          return;
+        }
+
+        resolve({ decision: data.decision || "deny", reason: data.reason || "" });
       });
     });
+
     req.on("error", (e) => {
+      log("warn", `bus unreachable: ${e.message}`);
       if (silent) { resolve(null); return; }
-      resolve({ decision: FAIL_MODE === "open" ? "allow" : "deny", reason: `HookBus unreachable: ${e.message}` });
+      resolve(failVerdict(`HookBus unreachable: ${e.message}`));
     });
     req.on("timeout", () => {
       req.destroy();
+      log("warn", "bus timeout");
       if (silent) { resolve(null); return; }
-      resolve({ decision: FAIL_MODE === "open" ? "allow" : "deny", reason: "HookBus timeout" });
+      resolve(failVerdict("HookBus timeout"));
     });
     req.write(body);
     req.end();
@@ -129,6 +211,9 @@ export default function register(api) {
     const envelope = buildEnvelope("PreToolUse", event.toolName, event.params, ctx);
     const { decision, reason } = await postEvent(envelope);
     if (decision === "allow") return;
+    if (decision !== "deny" && decision !== "ask") {
+      log("warn", `unknown verdict decision '${decision}' for PreToolUse, treating as deny`);
+    }
     const err = new Error(`HookBus ${decision}: ${reason || "no reason given"}`);
     err.code = "HOOKBUS_BLOCKED";
     throw err;
