@@ -1,9 +1,10 @@
 /**
  * HookBus publisher for OpenClaw.
  *
- * Registers three lifecycle hooks and forwards them as HookBus events:
+ * Registers four lifecycle hooks and forwards them as HookBus events:
  *   before_tool_call -> PreToolUse    (sync, enforces consolidated verdict)
  *   after_tool_call  -> PostToolUse   (observation, fire-and-forget)
+ *   llm_input        -> PreLLMCall    (sync, enforces consolidated verdict)
  *   llm_output       -> PostLLMCall   (observation, carries model + token usage)
  *
  * The most recent model/provider from llm_output is cached and auto-injected
@@ -25,7 +26,7 @@ import { request as httpsRequest } from "node:https";
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 
-const VERSION = "0.4.1";
+const VERSION = "0.5.1";
 const BUS_URL = process.env.HOOKBUS_URL || "http://localhost:18800/event";
 const TIMEOUT_MS = parseInt(process.env.HOOKBUS_TIMEOUT_MS || "60000", 10);
 const FAIL_MODE_RAW = (process.env.HOOKBUS_FAIL_MODE || "closed").toLowerCase();
@@ -214,9 +215,10 @@ export default function register(api) {
     if (decision !== "deny" && decision !== "ask") {
       log("warn", `unknown verdict decision '${decision}' for PreToolUse, treating as deny`);
     }
-    const err = new Error(`HookBus ${decision}: ${reason || "no reason given"}`);
-    err.code = "HOOKBUS_BLOCKED";
-    throw err;
+    const blockReason = decision === "ask"
+      ? `approval required: ${reason || "no reason given"}`
+      : (reason || "Blocked by HookBus subscriber (no reason given).");
+    return { block: true, blockReason };
   });
 
   // --- PostToolUse: fire-and-forget, carries result + duration ------------
@@ -228,6 +230,27 @@ export default function register(api) {
       success: !event.error,
     });
     await postEvent(envelope, { silent: true });
+  });
+
+  // --- PreLLMCall: sync, enforces verdict ---------------------------------
+  api.on("llm_input", async (event, ctx) => {
+    const envelope = buildEnvelope("PreLLMCall", "llm.api_request", {}, {
+      sessionId: event.sessionId,
+      runId: event.runId,
+    }, {
+      model: event.model || "",
+      provider: event.provider || "",
+      prompt_preview: truncate(event.prompt || event.messages || ""),
+    });
+    const { decision, reason } = await postEvent(envelope);
+    if (decision === "allow") return;
+    if (decision !== "deny" && decision !== "ask") {
+      log("warn", `unknown verdict decision '${decision}' for PreLLMCall, treating as deny`);
+    }
+    const blockReason = decision === "ask"
+      ? `approval required: ${reason || "no reason given"}`
+      : (reason || "Blocked by HookBus subscriber (no reason given).");
+    return { block: true, blockReason };
   });
 
   // --- PostLLMCall: fire-and-forget, carries model + token usage ----------
@@ -247,6 +270,7 @@ export default function register(api) {
       tokens_cache_write: usage.cacheWrite || 0,
       total_tokens: usage.total || (usage.input || 0) + (usage.output || 0),
       assistant_content_chars: (event.assistantTexts || []).reduce((n, t) => n + (t ? t.length : 0), 0),
+      response_content: (event.assistantTexts || []).join("\n").slice(0, 4000),
     });
     await postEvent(envelope, { silent: true });
   });
