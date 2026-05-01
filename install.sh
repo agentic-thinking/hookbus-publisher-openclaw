@@ -67,6 +67,9 @@ DROPIN
     "$OPENCLAW_BIN" config set plugins.installs.cre.sourcePath "$PLUGIN_DIR" >/dev/null 2>&1 || true
     "$OPENCLAW_BIN" config set plugins.installs.cre.installPath "$PLUGIN_DIR" >/dev/null 2>&1 || true
     "$OPENCLAW_BIN" config set plugins.installs.cre.version "$(node -e "console.log(require('$PLUGIN_DIR/package.json').version)" 2>/dev/null || echo unknown)" >/dev/null 2>&1 || true
+    "$OPENCLAW_BIN" config set gateway.mode local >/dev/null 2>&1 || \
+      warn "could not set gateway.mode=local; run: openclaw config set gateway.mode local"
+    "$OPENCLAW_BIN" config set gateway.bind loopback >/dev/null 2>&1 || true
   else
     warn "openclaw command not found; plugin installed but OpenClaw config was not updated."
   fi
