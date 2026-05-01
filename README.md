@@ -7,25 +7,25 @@ OpenClaw publisher plugin for **HookBus**, the vendor-neutral runtime governance
 One shell command installs the full HookBus stack and this OpenClaw publisher plugin. For the OpenClaw-specific path, use the `--runtime openclaw` flag below.
 
 ```bash
-curl -fsSL https://agenticthinking.uk/install.sh | bash
+curl -fsSL https://hookbus.com/install.sh | bash
 ```
 
 Non-interactive variants:
 
 ```bash
 # OpenClaw users
-curl -fsSL https://agenticthinking.uk/install.sh | bash -s -- --runtime openclaw
+curl -fsSL https://hookbus.com/install.sh | bash -s -- --runtime openclaw
 
 # Hermes-agent users
-curl -fsSL https://agenticthinking.uk/install.sh | bash -s -- --runtime hermes
+curl -fsSL https://hookbus.com/install.sh | bash -s -- --runtime hermes
 
 # Bus + subscribers only, skip publisher
-curl -fsSL https://agenticthinking.uk/install.sh | bash -s -- --runtime skip --noninteractive
+curl -fsSL https://hookbus.com/install.sh | bash -s -- --runtime skip --noninteractive
 ```
 
-The script prints the dashboard URL + bearer token on completion. Re-run any time, it is idempotent.
+The script prints the bus API URL + bearer token on completion. Re-run any time, it is idempotent.
 
-_Prefer not to pipe curl to bash? Inspect first:_ `curl -fsSL https://agenticthinking.uk/install.sh > install.sh && less install.sh && bash install.sh`
+_Prefer not to pipe curl to bash? Inspect first:_ `curl -fsSL https://hookbus.com/install.sh > install.sh && less install.sh && bash install.sh`
 
 ---
 
@@ -36,16 +36,16 @@ If you prefer to see every step, or you are building an immutable / reproducible
 The installer writes the plugin into `~/.openclaw/extensions/cre/` and stores HookBus credentials in `hookbus.env`, so normal `openclaw` and the OpenClaw gateway can load the publisher:
 
 ```bash
-npm install @agentic-thinking/hookbus-publisher-openclaw
-mkdir -p ~/.openclaw/extensions/cre
-cp -r node_modules/@agentic-thinking/hookbus-publisher-openclaw/* ~/.openclaw/extensions/cre/
+git clone https://github.com/agentic-thinking/hookbus-publisher-openclaw
+cd hookbus-publisher-openclaw
+./install.sh
 ```
 
 Verify it loaded:
 
 ```bash
 openclaw plugins list | grep cre
-# Expected: HookBus | cre | openclaw | loaded | ... | 0.4.0
+# Expected: HookBus Publisher | cre | loaded | ... | 0.5.1
 ```
 
 ## Config
@@ -61,9 +61,7 @@ openclaw plugins list | grep cre
 
 ## Gateway deployment (IMPORTANT)
 
-OpenClaw ships with a background **gateway** process that serves the TUI and `openclaw agent` commands. It runs as a systemd user service installed by `openclaw doctor --fix`. **The gateway does not inherit your shell env**, so you must pin HookBus credentials in its unit file or every event will silently 401 against the bus.
-
-Create `~/.config/systemd/user/openclaw-gateway.service.d/hookbus.conf`:
+OpenClaw ships with a background **gateway** process that serves the TUI and `openclaw agent` commands. The installer configures `gateway.mode=local`, installs/starts the systemd user service, and pins HookBus credentials in a service drop-in. If you rotate the bus token manually, update `~/.config/systemd/user/openclaw-gateway.service.d/hookbus.conf`:
 
 ```ini
 [Service]
@@ -73,15 +71,7 @@ Environment="HOOKBUS_FAIL_MODE=closed"
 Environment="HOOKBUS_SOURCE=openclaw"
 ```
 
-Then:
-
-```bash
-systemctl --user daemon-reload
-systemctl --user restart openclaw-gateway
-systemctl --user is-active openclaw-gateway  # expect: active
-```
-
-If you rotate the bus token, you **must** update this file and restart the gateway — stale tokens produce silent 401s (events vanish upstream of the dashboards).
+Then run `systemctl --user daemon-reload && systemctl --user restart openclaw-gateway`. Stale tokens produce 401s and events will not reach HookBus.
 
 ## Verify end-to-end
 
@@ -89,8 +79,8 @@ If you rotate the bus token, you **must** update this file and restart the gatew
 openclaw capability model run --prompt \"Reply with: PONG\"
 # Expected: PONG
 
-curl -s -H \"Authorization: Bearer $HOOKBUS_TOKEN\" http://localhost:8883/api/recent?limit=1
-# Expected: latest event with source=openclaw, model=<your-model>
+curl -s -H \"Authorization: Bearer $HOOKBUS_TOKEN\" http://localhost:18800/api/events
+# Expected: recent event with source=openclaw
 ```
 
 ## Pairs with
