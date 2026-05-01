@@ -30,7 +30,7 @@ async function testEnvelopeShape() {
   const bus = await startMockBus(async (env) => { captured = env; return { decision: "allow", reason: "" }; });
   try {
     const { buildEnvelope, postEvent } = await loadPublisher(`http://127.0.0.1:${bus.port}/event`);
-    const env = buildEnvelope("Bash", { command: "echo hi" });
+    const env = buildEnvelope("PreToolUse", "Bash", { command: "echo hi" }, { sessionId: "test-session" });
     await postEvent(env);
     assert.equal(captured.event_type, "PreToolUse");
     assert.equal(captured.source, "openclaw");
@@ -46,7 +46,7 @@ async function testAllowPath() {
   const bus = await startMockBus(async () => ({ decision: "allow", reason: "" }));
   try {
     const { postEvent, buildEnvelope } = await loadPublisher(`http://127.0.0.1:${bus.port}/event`);
-    const r = await postEvent(buildEnvelope("Bash", {}));
+    const r = await postEvent(buildEnvelope("PreToolUse", "Bash", {}, { sessionId: "test-session" }));
     assert.equal(r.decision, "allow");
     console.log("OK allow path");
   } finally { await bus.close(); }
@@ -56,7 +56,7 @@ async function testDenyPath() {
   const bus = await startMockBus(async () => ({ decision: "deny", reason: "blocked by test" }));
   try {
     const { postEvent, buildEnvelope } = await loadPublisher(`http://127.0.0.1:${bus.port}/event`);
-    const r = await postEvent(buildEnvelope("Bash", {}));
+    const r = await postEvent(buildEnvelope("PreToolUse", "Bash", {}, { sessionId: "test-session" }));
     assert.equal(r.decision, "deny");
     assert.match(r.reason, /blocked by test/);
     console.log("OK deny path");
@@ -66,7 +66,7 @@ async function testDenyPath() {
 async function testBusDownFailClosed() {
   // unreachable port
   const { postEvent, buildEnvelope } = await loadPublisher("http://127.0.0.1:1/event");
-  const r = await postEvent(buildEnvelope("Bash", {}));
+  const r = await postEvent(buildEnvelope("PreToolUse", "Bash", {}, { sessionId: "test-session" }));
   assert.equal(r.decision, "deny");
   assert.match(r.reason, /unreachable|timeout/i);
   console.log("OK fail-closed on bus-down");

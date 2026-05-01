@@ -33,7 +33,7 @@ _Prefer not to pipe curl to bash? Inspect first:_ `curl -fsSL https://agenticthi
 
 If you prefer to see every step, or you are building an immutable / reproducible deployment, here is the full manual install.
 
-The plugin directory name must match the `id` field in `openclaw.plugin.json` (`"id": "cre"`), so it installs into `~/.openclaw/extensions/cre/`:
+The installer writes the plugin into `~/.openclaw/extensions/cre/` and stores HookBus credentials in `hookbus.env`, so normal `openclaw` and the OpenClaw gateway can load the publisher:
 
 ```bash
 npm install @agentic-thinking/hookbus-publisher-openclaw

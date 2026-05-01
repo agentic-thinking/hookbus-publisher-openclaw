@@ -25,15 +25,40 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const VERSION = "0.5.1";
-const BUS_URL = process.env.HOOKBUS_URL || "http://localhost:18800/event";
-const TIMEOUT_MS = parseInt(process.env.HOOKBUS_TIMEOUT_MS || "60000", 10);
-const FAIL_MODE_RAW = (process.env.HOOKBUS_FAIL_MODE || "closed").toLowerCase();
+
+function loadEnvFile(path) {
+  if (!existsSync(path)) return {};
+  const out = {};
+  for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+    const idx = trimmed.indexOf("=");
+    const key = trimmed.slice(0, idx).trim();
+    let value = trimmed.slice(idx + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
+const PLUGIN_DIR = dirname(fileURLToPath(import.meta.url));
+const FILE_ENV = loadEnvFile(join(PLUGIN_DIR, "hookbus.env"));
+const cfg = (name, fallback = "") => process.env[name] || FILE_ENV[name] || fallback;
+
+const BUS_URL = cfg("HOOKBUS_URL", "http://localhost:18800/event");
+const TIMEOUT_MS = parseInt(cfg("HOOKBUS_TIMEOUT_MS", "60000"), 10);
+const FAIL_MODE_RAW = cfg("HOOKBUS_FAIL_MODE", "closed").toLowerCase();
 const FAIL_MODE = FAIL_MODE_RAW === "open" ? "open" : "closed";
-const SOURCE = process.env.HOOKBUS_SOURCE || "openclaw";
-const TOKEN = process.env.HOOKBUS_TOKEN || "";
-const DEBUG = process.env.HOOKBUS_DEBUG === "1";
+const SOURCE = cfg("HOOKBUS_SOURCE", "openclaw");
+const TOKEN = cfg("HOOKBUS_TOKEN", "");
+const DEBUG = cfg("HOOKBUS_DEBUG", "") === "1";
 
 function log(level, msg) {
   if (!DEBUG && level === "info") return;
@@ -53,7 +78,7 @@ function log(level, msg) {
     log("error", `HOOKBUS_URL is not a valid URL (${BUS_URL}): ${e.message}`);
   }
   if (!TOKEN) log("warn", "HOOKBUS_TOKEN is empty; authenticated buses will reject requests");
-  log("info", `started v${VERSION} (source=${SOURCE}, fail_mode=${FAIL_MODE}, bus=${BUS_URL})`);
+  log("info", `started v${VERSION} (source=${SOURCE}, fail_mode=${FAIL_MODE}, bus=${BUS_URL}, config=${Object.keys(FILE_ENV).length ? "hookbus.env" : "env only"})`);
 })();
 
 // Cached from most recent llm_output so tool-call events get model attribution.
@@ -163,7 +188,7 @@ function isoNow() {
 }
 
 function sessionOf(ctx) {
-  return (ctx && ctx.sessionId) || process.env.OPENCLAW_SESSION_ID || `openclaw-${hostname()}-${process.pid}`;
+  return (ctx && ctx.sessionId) || cfg("OPENCLAW_SESSION_ID", "") || `openclaw-${hostname()}-${process.pid}`;
 }
 
 function mergeModelMeta(extra) {
