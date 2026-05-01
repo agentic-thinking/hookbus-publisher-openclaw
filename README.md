@@ -73,6 +73,12 @@ Environment="HOOKBUS_SOURCE=openclaw"
 
 Then run `systemctl --user daemon-reload && systemctl --user restart openclaw-gateway`. Stale tokens produce 401s and events will not reach HookBus.
 
+## Model auth is separate
+
+This publisher wires OpenClaw events into HookBus. It does not configure OpenClaw's model provider credentials. Configure OpenClaw normally first, then install this publisher.
+
+If `openclaw tui` reports a missing Anthropic key even though you use Kimi or another provider, check for stale OpenClaw session/default model state. The active model should match your configured provider, for example `kimi-coding/k2p5`, before you test HookBus events.
+
 ## Verify end-to-end
 
 ```bash
@@ -86,8 +92,7 @@ curl -s -H \"Authorization: Bearer $HOOKBUS_TOKEN\" http://localhost:18800/api/e
 ## Pairs with
 
 - **HookBus Light** (Apache 2.0, free Docker) — bus broker
-- **CRE-AgentProtect** (MIT) — Microsoft AGT adapter subscriber
-- **HookBus-AgentSpend** (MIT) — token-cost subscriber
+- **CRE-AgentProtect Light** (MIT) — Microsoft AGT adapter subscriber
 - **HookBus Enterprise** (commercial) — see [agenticthinking.uk](https://agenticthinking.uk).
 
 ## Licence
